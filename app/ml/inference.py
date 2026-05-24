@@ -8,7 +8,7 @@ inference.py
 import logging
 from typing import Optional
 
-from src.models.multimodal_model import AirsoftMultimodalModel
+from app.ml.multimodal_model import AirsoftMultimodalModel
 
 logger = logging.getLogger(__name__)
 
