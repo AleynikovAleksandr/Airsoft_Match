@@ -16,10 +16,10 @@ import os
 import uvicorn
 from fastapi import FastAPI
 
-from src.api.routes import router
-from src.db.database import create_tables
-from src.models.inference import get_model
-from src.models.trainer import ModelTrainer
+from app.api.routes import router
+from app.db.database import create_tables
+from app.ml.inference import get_model
+from app.ml.trainer import ModelTrainer
 
 # --------------------------------------------------------------------------- #
 #  Настройка логирования                                                       #
