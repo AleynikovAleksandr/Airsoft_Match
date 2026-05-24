@@ -27,8 +27,8 @@ airsoft_api/
 │   │   └── classifier.pkl
 │   └── subcategory_model/
 │       └── classifier.pkl
-├── config.py
-├── main.py
+├── app/config.py
+├── app/main.py
 ├── Dockerfile
 ├── docker-compose.yml
 └── requirements.txt

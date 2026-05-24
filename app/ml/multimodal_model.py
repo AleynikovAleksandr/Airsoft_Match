@@ -18,7 +18,7 @@ import numpy as np
 import torch
 from transformers import AutoModel, AutoTokenizer, ViTImageProcessor, ViTModel
 
-from config import settings
+from app.config import settings
 from app.utils import download_and_process_image
 
 logger = logging.getLogger(__name__)

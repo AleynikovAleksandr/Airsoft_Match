@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
-from config import settings
+from app.config import settings
 from app.api.auth import create_access_token, decode_access_token
 from app.api.schemas import LoginRequest, PredictRequest, PredictResponse, RegisterRequest, TokenResponse
 from app.db.crud import authenticate_user, create_user, get_user_by_username

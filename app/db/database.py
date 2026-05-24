@@ -11,7 +11,7 @@ from sqlalchemy import Column, DateTime, Integer, String, create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from sqlalchemy.sql import func
 
-from config import settings
+from app.config import settings
 
 # Создаём директорию для БД, если её нет
 os.makedirs("database", exist_ok=True)

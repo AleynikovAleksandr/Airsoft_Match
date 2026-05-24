@@ -20,7 +20,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.multioutput import MultiOutputClassifier
 from sklearn.preprocessing import LabelEncoder
 
-from config import settings
+from app.config import settings
 from app.ml.multimodal_model import AirsoftMultimodalModel
 from app.utils import download_and_process_image
 
