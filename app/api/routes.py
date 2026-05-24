@@ -12,60 +12,17 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from config import settings
-from src.api.auth import create_access_token, decode_access_token
-from src.db.crud import authenticate_user, create_user, get_user_by_username
-from src.db.database import get_db
-from src.models.inference import run_inference
+from app.api.auth import create_access_token, decode_access_token
+from app.api.schemas import LoginRequest, PredictRequest, PredictResponse, RegisterRequest, TokenResponse
+from app.db.crud import authenticate_user, create_user, get_user_by_username
+from app.db.database import get_db
+from app.ml.inference import run_inference
 
 router = APIRouter()
 security = HTTPBearer()
-
-
-# --------------------------------------------------------------------------- #
-#  Pydantic схемы                                                              #
-# --------------------------------------------------------------------------- #
-
-class RegisterRequest(BaseModel):
-    username: str = Field(..., min_length=3, max_length=50)
-    password: str = Field(..., min_length=6)
-
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-
-
-class PhotoItem(BaseModel):
-    photo_id: str
-    url: str
-
-
-class PredictRequest(BaseModel):
-    post_id: str
-    text: str
-    photos: list[PhotoItem]
-
-
-class ObjectPrediction(BaseModel):
-    object_id: str
-    category: str
-    subcategory: str
-    confidence: float
-    photo_ids: list[str]
-
-
-class PredictResponse(BaseModel):
-    post_id: str
-    predictions: list[ObjectPrediction]
 
 
 # --------------------------------------------------------------------------- #

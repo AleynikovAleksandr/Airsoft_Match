@@ -1,16 +1,16 @@
 # Airsoft Multimodal API
 
-Система классификации страйкбольного снаряжения по тексту и фотографиям объявлений.
+Система multi-head классификации страйкбольного снаряжения по тексту и фотографиям объявлений (category + subcategory одновременно).
 
 ## Структура проекта
 
 ```
 airsoft_api/
-├── src/
-│   ├── models/
-│   │   ├── multimodal_model.py   # Основная мультимодальная модель
-│   │   ├── trainer.py            # Обучение модели
-│   │   └── inference.py         # Инференс
+├── app/
+│   ├── ml/
+│   │   ├── multimodal_model.py   # Единая multi-head модель
+│   │   ├── trainer.py            # Обучение joint классификатора
+│   │   └── inference.py          # Инференс
 │   ├── api/
 │   │   └── routes.py            # FastAPI endpoints
 │   └── db/
