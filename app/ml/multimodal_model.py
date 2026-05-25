@@ -20,6 +20,7 @@ from transformers import AutoModel, AutoTokenizer, ViTImageProcessor, ViTModel
 
 from app.config import settings
 from app.utils import download_and_process_image
+from app.text_preprocessing import preprocessor
 
 logger = logging.getLogger(__name__)
 
@@ -77,8 +78,11 @@ class AirsoftMultimodalModel:
 
     @torch.no_grad()
     def get_text_embedding(self, text: str) -> np.ndarray:
+        clean_text = preprocessor.clean_text(text)
+        model_text = clean_text if clean_text else text
+
         inputs = self.tokenizer(
-            text,
+            model_text,
             return_tensors="pt",
             padding=True,
             truncation=True,
