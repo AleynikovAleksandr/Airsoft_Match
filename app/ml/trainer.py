@@ -1,17 +1,14 @@
 """
 trainer.py
 ==========
-Обучение единого multi-head multiclass классификатора:
-
-Вход: concat(ruBert текст, ViT фото) -> 1536d
-Выход: две метки одновременно
-  1) category
-  2) subcategory
+Обучение единого multi-head multiclass классификатора.
 """
 
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 import joblib
 import numpy as np
@@ -37,6 +34,28 @@ def _load_one_post_photo(args):
     return fused, y_cat, y_sub
 
 
+def _build_subcategory_index(subcategory_images_dir: str) -> dict[str, str]:
+    """Индекс: имя файла -> subcategory (по папке)."""
+    mapping: dict[str, str] = {}
+    root = Path(subcategory_images_dir)
+    if not root.exists():
+        return mapping
+
+    for sub_dir in root.iterdir():
+        if not sub_dir.is_dir():
+            continue
+        subcategory = sub_dir.name
+        for fp in sub_dir.iterdir():
+            if fp.is_file():
+                mapping[fp.name] = subcategory
+    return mapping
+
+
+def _extract_filename_from_url(url: str) -> str:
+    parsed = urlparse(str(url))
+    return unquote(Path(parsed.path).name)
+
+
 class ModelTrainer:
     def __init__(self, model: AirsoftMultimodalModel):
         self.model = model
@@ -54,57 +73,106 @@ class ModelTrainer:
         posts_df = pd.read_parquet(posts_path)
         photos_df = pd.read_parquet(photos_path)
 
-        if "category" not in posts_df.columns:
-            logger.error("В posts.parquet нет колонки 'category'")
-            return
+        # Нормализуем имена столбцов для устойчивости
+        posts_cols = {c.lower(): c for c in posts_df.columns}
+        photos_cols = {c.lower(): c for c in photos_df.columns}
 
-        if "subcategory" not in posts_df.columns:
-            logger.error("В posts.parquet нет колонки 'subcategory' для multi-head обучения")
-            return
+        # case 1: старый формат с category/subcategory
+        has_old = "category" in posts_cols and "subcategory" in posts_cols and "url" in photos_cols
 
-        if "url" not in photos_df.columns:
-            logger.error("В photos.parquet нет колонки 'url'")
-            return
+        records = []
 
-        post_id_col = None
-        for col in ("post_id", "id", "owner_id"):
-            if col in posts_df.columns and col in photos_df.columns:
-                post_id_col = col
-                break
+        if has_old:
+            logger.info("Используется формат posts(category/subcategory) + photos(url)")
+            post_id_col = None
+            for col in ("post_id", "id", "owner_id"):
+                if col in posts_cols and col in photos_cols:
+                    post_id_col = (posts_cols[col], photos_cols[col])
+                    break
+
+            for _, post_row in posts_df.iterrows():
+                category = str(post_row.get(posts_cols["category"], "")).strip()
+                subcategory = str(post_row.get(posts_cols["subcategory"], "")).strip()
+                text = str(post_row.get(posts_cols.get("text", "text"), ""))
+                if not category or not subcategory:
+                    continue
+
+                if post_id_col:
+                    pcol, phcol = post_id_col
+                    pid = post_row[pcol]
+                    urls = photos_df[photos_df[phcol] == pid][photos_cols["url"]].tolist()
+                else:
+                    urls = photos_df[photos_cols["url"]].tolist()
+
+                for url in urls:
+                    records.append((str(text), str(url), category, subcategory))
+        else:
+            logger.info("Используется новый формат: merge photos.PostId -> posts.Id и categoryname")
+            # Ожидаемые столбцы нового формата
+            photos_postid = photos_cols.get("postid")
+            photos_id = photos_cols.get("id")
+            photos_url = photos_cols.get("url")
+            posts_id = posts_cols.get("id")
+            posts_text = posts_cols.get("text")
+            posts_category = posts_cols.get("categoryname")
+
+            missing = []
+            for name, col in {
+                "photos.PostId": photos_postid,
+                "photos.Url": photos_url,
+                "posts.Id": posts_id,
+                "posts.Text": posts_text,
+                "posts.categoryname": posts_category,
+            }.items():
+                if col is None:
+                    missing.append(name)
+
+            if missing:
+                logger.error("Не хватает столбцов для merge-обучения: %s", ", ".join(missing))
+                return
+
+            merged = photos_df.merge(
+                posts_df,
+                left_on=photos_postid,
+                right_on=posts_id,
+                how="inner",
+                suffixes=("_photo", "_post"),
+            )
+
+            sub_map = _build_subcategory_index(settings.SUBCATEGORY_IMAGES_DIR)
+            if not sub_map:
+                logger.error("Не найден индекс subcategory из папок: %s", settings.SUBCATEGORY_IMAGES_DIR)
+                return
+
+            for _, row in merged.iterrows():
+                text = str(row.get(posts_text, ""))
+                url = str(row.get(photos_url, ""))
+                category = str(row.get(posts_category, "")).strip()
+                filename = _extract_filename_from_url(url)
+                subcategory = sub_map.get(filename, "")
+
+                if not category or not subcategory or not url:
+                    continue
+                records.append((text, url, category, subcategory))
+
+        if not records:
+            logger.error("Не сформированы записи для обучения")
+            return
 
         cat_le = LabelEncoder()
         sub_le = LabelEncoder()
-        cat_le.fit(sorted(posts_df["category"].astype(str).unique().tolist()))
-        sub_le.fit(sorted(posts_df["subcategory"].astype(str).unique().tolist()))
+        cat_le.fit(sorted({r[2] for r in records}))
+        sub_le.fit(sorted({r[3] for r in records}))
 
         self.model.categories = list(cat_le.classes_)
         self.model.subcategories = list(sub_le.classes_)
 
         tasks = []
-        for _, post_row in posts_df.iterrows():
-            category = str(post_row.get("category", "")).strip()
-            subcategory = str(post_row.get("subcategory", "")).strip()
-            if not category or not subcategory:
-                continue
-
+        for text, url, category, subcategory in records:
+            text_emb = self.model.get_text_embedding(text)
             y_cat = int(cat_le.transform([category])[0])
             y_sub = int(sub_le.transform([subcategory])[0])
-
-            text = str(post_row.get("text", ""))
-            text_emb = self.model.get_text_embedding(text)
-
-            if post_id_col:
-                pid = post_row[post_id_col]
-                post_photos = photos_df[photos_df[post_id_col] == pid]["url"].tolist()
-            else:
-                post_photos = photos_df["url"].tolist()
-
-            for url in post_photos:
-                tasks.append((self.model, str(url), text_emb, y_cat, y_sub))
-
-        if not tasks:
-            logger.error("Не сформированы задачи для обучения joint модели")
-            return
+            tasks.append((self.model, url, text_emb, y_cat, y_sub))
 
         X, y_cat_arr, y_sub_arr = [], [], []
         with ThreadPoolExecutor(max_workers=settings.IMAGE_LOAD_WORKERS) as executor:
