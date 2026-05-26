@@ -4,7 +4,7 @@ import os
 
 class Settings(BaseSettings):
     # JWT
-    SECRET_KEY: str = "super-secret-key-change-in-production"
+    SECRET_KEY: str = "wFpiEc2PvuShiNpEixH3QSgI0ny4ngbGWHdbYENNvR09qq4zTRCcdbJ_LzKgJoMVuORT8aQGJtY6zOp3nmEuIw"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 часа
 
