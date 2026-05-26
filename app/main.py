@@ -15,6 +15,8 @@ import os
 
 import uvicorn
 from fastapi import FastAPI
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+from fastapi.responses import HTMLResponse
 
 from app.api.routes import router
 from app.db.database import create_tables
@@ -38,6 +40,8 @@ logger = logging.getLogger(__name__)
 # --------------------------------------------------------------------------- #
 
 app = FastAPI(
+    docs_url=None,
+    redoc_url=None,
     title="Airsoft Multimodal API",
     description=(
         "API для классификации страйкбольного снаряжения "
@@ -79,6 +83,17 @@ def startup_event():
 
     logger.info("Приложение готово к работе")
 
+
+
+
+@app.get("/docs", include_in_schema=False, tags=["System"])
+async def custom_swagger_ui_html() -> HTMLResponse:
+    return get_swagger_ui_html(openapi_url=app.openapi_url, title=f"{app.title} - Swagger UI")
+
+
+@app.get("/redoc", include_in_schema=False, tags=["System"])
+async def redoc_html() -> HTMLResponse:
+    return get_redoc_html(openapi_url=app.openapi_url, title=f"{app.title} - ReDoc")
 
 @app.get("/health", tags=["System"])
 def health_check():
