@@ -51,6 +51,8 @@ The generated text and image embeddings are concatenated into a single fused mul
 - `POST /auth/register` — user registration
 - `POST /auth/login` — authentication and JWT token retrieval
 - `POST /predict` — category/subcategory prediction (requires JWT authentication)
+- `GET /docs` — Swagger UI (interactive API documentation)
+- `GET /redoc` — ReDoc documentation
 
 ## Application Notes
 
