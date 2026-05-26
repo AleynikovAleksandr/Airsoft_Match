@@ -10,15 +10,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Зависимости Python
-COPY requirements.txt .
+COPY app/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Код приложения
 COPY . .
 
 # Создаём директории для данных, модели и БД
-RUN mkdir -p database model/category_model model/subcategory_model \
-             data/raw/subcategory_images
+RUN mkdir -p database model/joint_model data/raw/subcategory_images
 
 EXPOSE 8000
 

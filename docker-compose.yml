@@ -2,7 +2,9 @@ version: "3.9"
 
 services:
   airsoft-api:
-    build: .
+    build:
+      context: .
+      dockerfile: app/Dockerfile
     image: airsoft-api:latest
     container_name: airsoft_api
     restart: unless-stopped
