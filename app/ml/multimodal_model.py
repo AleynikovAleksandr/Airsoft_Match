@@ -15,8 +15,8 @@ import torch
 from transformers import AutoModel, AutoTokenizer, ViTImageProcessor, ViTModel
 
 from app.config import settings
-from app.text_preprocessing import preprocessor
-from app.utils import download_and_process_image
+from app.utils.text_preprocessing import preprocessor
+from app.utils.image_utils import download_and_process_image
 
 logger = logging.getLogger(__name__)
 

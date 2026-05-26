@@ -19,7 +19,7 @@ from sklearn.preprocessing import LabelEncoder
 
 from app.config import settings
 from app.ml.multimodal_model import AirsoftMultimodalModel
-from app.utils import download_and_process_image, load_image_from_path
+from app.utils.image_utils import download_and_process_image, load_image_from_path
 
 logger = logging.getLogger(__name__)
 
