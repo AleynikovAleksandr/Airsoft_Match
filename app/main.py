@@ -80,6 +80,8 @@ def startup_event():
     logger.info("Приложение готово к работе")
 
 
+
+
 @app.get("/health", tags=["System"])
 def health_check():
     model = get_model()
