@@ -14,7 +14,7 @@ ENV/
 .venv/
 .env
 .env.*
-!.env.example
+.env.example
 *.log
 logs/
 .DS_Store
@@ -32,6 +32,7 @@ htmlcov/
 __debug__.py
 tmp/
 temp/
+*/__init__.py
 
 # Исключения — чтобы модели и база данных коммитились
 !*.pkl
