@@ -1,34 +1,36 @@
-from pydantic_settings import BaseSettings
 import os
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+BASE_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..")
+)
 
 
 class Settings(BaseSettings):
-    # JWT
-    SECRET_KEY: str = "wFpiEc2PvuShiNpEixH3QSgI0ny4ngbGWHdbYENNvR09qq4zTRCcdbJ_LzKgJoMVuORT8aQGJtY6zOp3nmEuIw"
-    ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 часа
+    SECRET_KEY: str
+    ALGORITHM: str
+    ACCESS_TOKEN_EXPIRE_MINUTES: int
 
-    # База данных
-    DATABASE_URL: str = "sqlite:///./database/users.db"
+    DATABASE_URL: str
 
-    # Модели
-    MODEL_DIR: str = "model"
-    TEXT_MODEL_NAME: str = "ai-forever/ruBert-base"
-    IMAGE_MODEL_NAME: str = "google/vit-base-patch16-224"
+    MODEL_DIR: str
+    TEXT_MODEL_NAME: str
+    IMAGE_MODEL_NAME: str
 
-    # Данные
-    DATA_DIR: str = "data/raw"
-    POSTS_FILE: str = "data/raw/posts.parquet"
-    PHOTOS_FILE: str = "data/raw/photos.parquet"
-    SUBCATEGORY_IMAGES_DIR: str = "data/raw/subcategory_images"
+    DATA_DIR: str
+    POSTS_FILE: str
+    PHOTOS_FILE: str
+    SUBCATEGORY_IMAGES_DIR: str
 
-    # Обучение
-    N_JOBS: int = -1          # все ядра для Random Forest
-    N_ESTIMATORS: int = 200   # деревьев в лесу
-    IMAGE_LOAD_WORKERS: int = 4
+    N_JOBS: int
+    N_ESTIMATORS: int
+    IMAGE_LOAD_WORKERS: int
 
-    class Config:
-        env_file = ".env"
+    model_config = SettingsConfigDict(
+        env_file=os.path.join(BASE_DIR, ".env_multimodal"),
+        extra="ignore",
+    )
 
 
 settings = Settings()
