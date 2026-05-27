@@ -9,20 +9,20 @@ BASE_DIR = os.path.abspath(
 
 
 class Settings(BaseSettings):
-    SECRET_KEY: str = Field(..., min_length=1)
-    ALGORITHM: str = Field(..., min_length=1)
+    SECRET_KEY: str = Field(...)
+    ALGORITHM: str = Field(...)
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(..., gt=0)
 
-    DATABASE_URL: str = Field(..., min_length=1)
+    DATABASE_URL: str = Field(...)
 
-    MODEL_DIR: str = Field(..., min_length=1)
-    TEXT_MODEL_NAME: str = Field(..., min_length=1)
-    IMAGE_MODEL_NAME: str = Field(..., min_length=1)
+    MODEL_DIR: str = Field(...)
+    TEXT_MODEL_NAME: str = Field(...)
+    IMAGE_MODEL_NAME: str = Field(...)
 
-    DATA_DIR: str = Field(..., min_length=1)
-    POSTS_FILE: str = Field(..., min_length=1)
-    PHOTOS_FILE: str = Field(..., min_length=1)
-    SUBCATEGORY_IMAGES_DIR: str = Field(..., min_length=1)
+    DATA_DIR: str = Field(...)
+    POSTS_FILE: str = Field(...)
+    PHOTOS_FILE: str = Field(...)
+    SUBCATEGORY_IMAGES_DIR: str = Field(...)
 
     N_JOBS: int = Field(...)
     N_ESTIMATORS: int = Field(..., gt=0)
