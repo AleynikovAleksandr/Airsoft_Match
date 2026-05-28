@@ -1,13 +1,9 @@
 """
 AirsoftMultimodalModel
 ======================
-Единая multi-head multiclass система:
-  - Общий энкодер: ruBert + ViT -> fused embedding (1536)
-  - Head #1: category
-  - Head #2: subcategory
-
-Технически используется один multi-output классификатор sklearn,
-который предсказывает обе метки одновременно по одному входному вектору.
+Мультимодальная система:
+  - category: классификатор по fused embedding
+  - subcategory: similarity-based по prototype vectors (cosine)
 """
 
 import logging
@@ -19,7 +15,8 @@ import torch
 from transformers import AutoModel, AutoTokenizer, ViTImageProcessor, ViTModel
 
 from app.config import settings
-from app.utils import download_and_process_image
+from app.utils.text_preprocessing import preprocessor
+from app.utils.image_utils import download_and_process_image
 
 logger = logging.getLogger(__name__)
 
@@ -64,21 +61,26 @@ class AirsoftMultimodalModel:
         self.categories = CATEGORIES
         self.subcategories = SUBCATEGORIES
 
-        joint_path = os.path.join(settings.MODEL_DIR, "joint_model", "classifier.pkl")
+        cat_clf_path = os.path.join(settings.MODEL_DIR, "joint_model", "category_classifier.pkl")
         cat_le_path = os.path.join(settings.MODEL_DIR, "joint_model", "category_label_encoder.pkl")
-        sub_le_path = os.path.join(settings.MODEL_DIR, "joint_model", "subcategory_label_encoder.pkl")
+        proto_path = os.path.join(settings.MODEL_DIR, "joint_model", "subcategory_prototypes.pkl")
 
-        self.joint_clf = joblib.load(joint_path) if os.path.exists(joint_path) else None
+        self.category_clf = joblib.load(cat_clf_path) if os.path.exists(cat_clf_path) else None
         self.category_le = joblib.load(cat_le_path) if os.path.exists(cat_le_path) else None
-        self.subcategory_le = joblib.load(sub_le_path) if os.path.exists(sub_le_path) else None
+        self.subcategory_prototypes = joblib.load(proto_path) if os.path.exists(proto_path) else {}
 
-        if self.joint_clf is None:
-            logger.warning("Joint multi-head классификатор не найден — требуется обучение")
+        if self.category_clf is None:
+            logger.warning("Category classifier не найден — требуется обучение")
+        if not self.subcategory_prototypes:
+            logger.warning("Subcategory prototypes не найдены — требуется построение")
 
     @torch.no_grad()
     def get_text_embedding(self, text: str) -> np.ndarray:
+        clean_text = preprocessor.clean_text(text)
+        model_text = clean_text if clean_text else text
+
         inputs = self.tokenizer(
-            text,
+            model_text,
             return_tensors="pt",
             padding=True,
             truncation=True,
@@ -98,6 +100,29 @@ class AirsoftMultimodalModel:
     def get_fused_embedding(self, text_emb: np.ndarray, img_emb: np.ndarray) -> np.ndarray:
         return np.concatenate([text_emb, img_emb], axis=1)
 
+    def _predict_subcategory_by_similarity(self, fused: np.ndarray) -> tuple[str, float]:
+        if not self.subcategory_prototypes:
+            return self.subcategories[0], 0.0
+
+        v = fused.flatten()
+        v_norm = np.linalg.norm(v)
+        if v_norm == 0:
+            return self.subcategories[0], 0.0
+
+        best_label = self.subcategories[0]
+        best_score = -1.0
+        for label, proto in self.subcategory_prototypes.items():
+            p = np.asarray(proto).flatten()
+            p_norm = np.linalg.norm(p)
+            if p_norm == 0:
+                continue
+            score = float(np.dot(v, p) / (v_norm * p_norm))
+            if score > best_score:
+                best_score = score
+                best_label = label
+
+        return best_label, max(0.0, min(1.0, (best_score + 1.0) / 2.0))
+
     def predict(self, text: str, photo_urls: list[dict]) -> list[dict]:
         predictions = []
         text_emb = self.get_text_embedding(text)
@@ -114,20 +139,16 @@ class AirsoftMultimodalModel:
             img_emb = self.get_image_embedding(img_tensor)
             fused = self.get_fused_embedding(text_emb, img_emb)
 
-            if self.joint_clf and self.category_le and self.subcategory_le:
-                pred = self.joint_clf.predict(fused)[0]
-                cat_idx, sub_idx = int(pred[0]), int(pred[1])
-
-                proba_heads = self.joint_clf.predict_proba(fused)
-                cat_conf = float(np.max(proba_heads[0][0]))
-                sub_conf = float(np.max(proba_heads[1][0]))
-
+            if self.category_clf is not None and self.category_le is not None:
+                cat_idx = int(self.category_clf.predict(fused)[0])
+                cat_probs = self.category_clf.predict_proba(fused)
+                cat_conf = float(np.max(cat_probs[0])) if isinstance(cat_probs, list) else float(np.max(cat_probs))
                 category = self.category_le.inverse_transform([cat_idx])[0]
-                subcategory = self.subcategory_le.inverse_transform([sub_idx])[0]
             else:
                 category = self.categories[0]
-                subcategory = self.subcategories[0]
-                cat_conf, sub_conf = 0.7, 0.7
+                cat_conf = 0.7
+
+            subcategory, sub_conf = self._predict_subcategory_by_similarity(fused)
 
             predictions.append(
                 {
@@ -142,8 +163,4 @@ class AirsoftMultimodalModel:
         return predictions
 
     def is_ready(self) -> bool:
-        return (
-            self.joint_clf is not None
-            and self.category_le is not None
-            and self.subcategory_le is not None
-        )
+        return self.category_clf is not None and self.category_le is not None and bool(self.subcategory_prototypes)
