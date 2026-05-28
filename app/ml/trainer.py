@@ -1,149 +1,181 @@
 """
 trainer.py
 ==========
-Обучение единого multi-head multiclass классификатора:
-
-Вход: concat(ruBert текст, ViT фото) -> 1536d
-Выход: две метки одновременно
-  1) category
-  2) subcategory
+Обучение:
+  1) category-классификатор по fused embeddings
+  2) subcategory prototype vectors по папкам reference-изображений
 """
 
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
 import joblib
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.multioutput import MultiOutputClassifier
 from sklearn.preprocessing import LabelEncoder
 
 from app.config import settings
 from app.ml.multimodal_model import AirsoftMultimodalModel
-from app.utils import download_and_process_image
+from app.utils.image_utils import download_and_process_image, load_image_from_path
 
 logger = logging.getLogger(__name__)
-
-
-def _load_one_post_photo(args):
-    model, url, text_emb, y_cat, y_sub = args
-    img_tensor = download_and_process_image(url, model.image_processor)
-    if img_tensor is None:
-        return None
-    img_emb = model.get_image_embedding(img_tensor)
-    fused = model.get_fused_embedding(text_emb, img_emb)
-    return fused, y_cat, y_sub
 
 
 class ModelTrainer:
     def __init__(self, model: AirsoftMultimodalModel):
         self.model = model
+        self.text_cache = {}
 
-    def train_joint_model(self) -> None:
-        logger.info("=== Обучение joint multi-head модели ===")
+    def _get_text_embedding_cached(self, text: str):
+        text = str(text)
+        if text not in self.text_cache:
+            self.text_cache[text] = self.model.get_text_embedding(text)
+        return self.text_cache[text]
 
-        posts_path = settings.POSTS_FILE
-        photos_path = settings.PHOTOS_FILE
+    def _load_dataset(self):
+        posts_df = pd.read_parquet(settings.POSTS_FILE)
+        photos_df = pd.read_parquet(settings.PHOTOS_FILE)
 
-        if not os.path.exists(posts_path) or not os.path.exists(photos_path):
-            logger.error("Файлы данных не найдены: %s, %s", posts_path, photos_path)
-            return
+        posts_cols = {c.lower(): c for c in posts_df.columns}
+        photos_cols = {c.lower(): c for c in photos_df.columns}
 
-        posts_df = pd.read_parquet(posts_path)
-        photos_df = pd.read_parquet(photos_path)
+        required_posts = ["id", "text", "categoryname"]
+        required_photos = ["postid", "url"]
 
-        if "category" not in posts_df.columns:
-            logger.error("В posts.parquet нет колонки 'category'")
-            return
+        for col in required_posts:
+            if col not in posts_cols:
+                raise ValueError(f"posts.parquet missing column: {col}")
+        for col in required_photos:
+            if col not in photos_cols:
+                raise ValueError(f"photos.parquet missing column: {col}")
 
-        if "subcategory" not in posts_df.columns:
-            logger.error("В posts.parquet нет колонки 'subcategory' для multi-head обучения")
-            return
+        merged = photos_df.merge(
+            posts_df,
+            left_on=photos_cols["postid"],
+            right_on=posts_cols["id"],
+            how="inner",
+        )
 
-        if "url" not in photos_df.columns:
-            logger.error("В photos.parquet нет колонки 'url'")
-            return
+        logger.info("Merged rows: %s", len(merged))
+        logger.info("Found categories: %s", merged[posts_cols["categoryname"]].nunique())
+        return merged, posts_cols, photos_cols
 
-        post_id_col = None
-        for col in ("post_id", "id", "owner_id"):
-            if col in posts_df.columns and col in photos_df.columns:
-                post_id_col = col
-                break
+    def _build_subcategory_prototypes(self) -> dict[str, np.ndarray]:
+        root = Path(settings.SUBCATEGORY_IMAGES_DIR)
+        if not root.exists():
+            raise ValueError(f"Subcategory dir not found: {root}")
 
-        cat_le = LabelEncoder()
-        sub_le = LabelEncoder()
-        cat_le.fit(sorted(posts_df["category"].astype(str).unique().tolist()))
-        sub_le.fit(sorted(posts_df["subcategory"].astype(str).unique().tolist()))
-
-        self.model.categories = list(cat_le.classes_)
-        self.model.subcategories = list(sub_le.classes_)
-
-        tasks = []
-        for _, post_row in posts_df.iterrows():
-            category = str(post_row.get("category", "")).strip()
-            subcategory = str(post_row.get("subcategory", "")).strip()
-            if not category or not subcategory:
+        prototypes = {}
+        for sub_dir in root.iterdir():
+            if not sub_dir.is_dir():
                 continue
 
-            y_cat = int(cat_le.transform([category])[0])
-            y_sub = int(sub_le.transform([subcategory])[0])
+            class_name = sub_dir.name
+            class_embs = []
+            for fp in sub_dir.iterdir():
+                if not fp.is_file():
+                    continue
+                img_tensor = load_image_from_path(str(fp), self.model.image_processor)
+                if img_tensor is None:
+                    continue
+                img_emb = self.model.get_image_embedding(img_tensor)
+                class_embs.append(img_emb.flatten())
 
-            text = str(post_row.get("text", ""))
-            text_emb = self.model.get_text_embedding(text)
+            if class_embs:
+                proto = np.mean(np.array(class_embs), axis=0)
+                prototypes[class_name] = proto
+                logger.info("Prototype built: %s (%s images)", class_name, len(class_embs))
 
-            if post_id_col:
-                pid = post_row[post_id_col]
-                post_photos = photos_df[photos_df[post_id_col] == pid]["url"].tolist()
-            else:
-                post_photos = photos_df["url"].tolist()
+        if not prototypes:
+            raise ValueError("No subcategory prototypes were built")
 
-            for url in post_photos:
-                tasks.append((self.model, str(url), text_emb, y_cat, y_sub))
+        self.model.subcategories = sorted(prototypes.keys())
+        return prototypes
 
-        if not tasks:
-            logger.error("Не сформированы задачи для обучения joint модели")
+    def train_joint_model(self) -> None:
+        logger.info("=== Обучение category classifier + subcategory prototypes ===")
+
+        if not os.path.exists(settings.POSTS_FILE) or not os.path.exists(settings.PHOTOS_FILE):
+            logger.error("Файлы данных не найдены: %s, %s", settings.POSTS_FILE, settings.PHOTOS_FILE)
             return
 
-        X, y_cat_arr, y_sub_arr = [], [], []
+        try:
+            merged, posts_cols, photos_cols = self._load_dataset()
+            prototypes = self._build_subcategory_prototypes()
+        except ValueError as exc:
+            logger.error("Ошибка подготовки данных: %s", exc)
+            return
+
+        merged = merged.dropna(subset=[posts_cols["text"], posts_cols["categoryname"], photos_cols["url"]])
+        if merged.empty:
+            logger.error("После очистки merged-датасет пуст")
+            return
+
+        cat_le = LabelEncoder()
+        cat_le.fit(sorted(merged[posts_cols["categoryname"]].astype(str).str.strip().unique().tolist()))
+        self.model.categories = list(cat_le.classes_)
+        logger.info("Category classes: %s", self.model.categories)
+
+        tasks = []
+        for _, row in merged.iterrows():
+            text = str(row[posts_cols["text"]])
+            url = str(row[photos_cols["url"]])
+            category = str(row[posts_cols["categoryname"]]).strip()
+            if not category or not url:
+                continue
+            text_emb = self._get_text_embedding_cached(text)
+            y_cat = int(cat_le.transform([category])[0])
+            tasks.append((url, text_emb, y_cat))
+
+        X, y_cat_arr = [], []
+
+        def load_one(task):
+            url, text_emb, y_cat = task
+            img_tensor = download_and_process_image(url, self.model.image_processor)
+            if img_tensor is None:
+                return None
+            img_emb = self.model.get_image_embedding(img_tensor)
+            fused = self.model.get_fused_embedding(text_emb, img_emb)
+            return fused, y_cat
+
         with ThreadPoolExecutor(max_workers=settings.IMAGE_LOAD_WORKERS) as executor:
-            futures = {executor.submit(_load_one_post_photo, t): t for t in tasks}
+            futures = {executor.submit(load_one, t): t for t in tasks}
             for future in as_completed(futures):
                 result = future.result()
                 if result is not None:
-                    fused, y_cat, y_sub = result
+                    fused, y_cat = result
                     X.append(fused.flatten())
                     y_cat_arr.append(y_cat)
-                    y_sub_arr.append(y_sub)
 
         if not X:
-            logger.error("Не удалось загрузить данные для joint модели")
+            logger.error("Не удалось загрузить данные для category classifier")
             return
 
         X = np.array(X)
-        Y = np.column_stack([np.array(y_cat_arr), np.array(y_sub_arr)])
+        y_cat = np.array(y_cat_arr)
 
-        base_rf = RandomForestClassifier(
+        clf = RandomForestClassifier(
             n_estimators=settings.N_ESTIMATORS,
             n_jobs=settings.N_JOBS,
             random_state=42,
             verbose=1,
         )
-        clf = MultiOutputClassifier(base_rf)
-        clf.fit(X, Y)
+        clf.fit(X, y_cat)
 
         save_dir = os.path.join(settings.MODEL_DIR, "joint_model")
         os.makedirs(save_dir, exist_ok=True)
-        joblib.dump(clf, os.path.join(save_dir, "classifier.pkl"))
+        joblib.dump(clf, os.path.join(save_dir, "category_classifier.pkl"))
         joblib.dump(cat_le, os.path.join(save_dir, "category_label_encoder.pkl"))
-        joblib.dump(sub_le, os.path.join(save_dir, "subcategory_label_encoder.pkl"))
+        joblib.dump(prototypes, os.path.join(save_dir, "subcategory_prototypes.pkl"))
 
-        self.model.joint_clf = clf
+        self.model.category_clf = clf
         self.model.category_le = cat_le
-        self.model.subcategory_le = sub_le
+        self.model.subcategory_prototypes = prototypes
 
-        logger.info("Joint multi-head модель обучена и сохранена в %s", save_dir)
+        logger.info("Category classifier and subcategory prototypes сохранены в %s", save_dir)
 
     def train_all(self) -> None:
         self.train_joint_model()
