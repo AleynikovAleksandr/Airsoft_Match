@@ -65,7 +65,7 @@ def get_current_user(
     status_code=status.HTTP_201_CREATED,
     summary="Регистрация нового пользователя",
 )
-def register(body: RegisterRequest, db: Session = Depends(get_db)):
+async def register(body: RegisterRequest, db: Session = Depends(get_db)):
     if get_user_by_username(db, body.username):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -80,7 +80,7 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
     response_model=TokenResponse,
     summary="Авторизация — получение JWT токена",
 )
-def login(body: LoginRequest, db: Session = Depends(get_db)):
+async def login(body: LoginRequest, db: Session = Depends(get_db)):
     user = authenticate_user(db, body.username, body.password)
     if user is None:
         raise HTTPException(
@@ -100,7 +100,7 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
     response_model=PredictResponse,
     summary="Предсказание категории и подкатегории снаряжения",
 )
-def predict(
+async def predict(
     body: PredictRequest,
     current_user=Depends(get_current_user),
 ):
